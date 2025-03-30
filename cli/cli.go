@@ -196,6 +196,7 @@ func orchestrateCommand(c *cli.Context) error {
 }
 
 func executeContainers(containerList []string) error {
+	// log.Println("Containers List:", containerList)
 	return nil
 }
 
