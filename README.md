@@ -1,6 +1,6 @@
 # go-Conorch
 
-## _Container orchestrator coupled with AI recommendation
+## _Container orchestrator coupled with AI recommendation_
 
 go-Conorch is a CLi tool for performing container orchestration via AI recommendation.
 
