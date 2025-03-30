@@ -48,3 +48,5 @@ make
 
 Desing has been kept minimal, different directories are present in tools. All these are main packages and 
 are hence independent. This independence helps us in developing alone repos and updating them via git modules.
+
+[Link to Diagram (Click me)](https://excalidraw.com/#json=h_3ohAoRMT6PZg1jTEm7y,jwbMN5hgFIirNoTmWK0S7A)
