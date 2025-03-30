@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/urfave/cli/v2"
@@ -98,11 +99,19 @@ func orchestrateCommand(c *cli.Context) error {
 	// ai-orc orch -f now.txt
 	filePath := c.String("file")
 
-	// Read file contents
-	fileData, err := os.ReadFile(filePath)
+	// Read the Prompt file contents
+	prompt, err := os.ReadFile(filePath)
 	if err != nil {
-		log.Fatalf("Error reading file: %v", err)
+		log.Fatalf("Error reading the Prompt file: %v", err)
 	}
+
+	// Read the Data file that needs to be worked on
+	data, err := os.ReadFile("data.txt")
+	if err != nil {
+		log.Fatalf("Error reading the file data: %v", err)
+	}
+
+	promptData := string(prompt) + string(data)
 
 	// Get all containers
 	containersList, err := os.ReadFile("containersList.txt")
@@ -124,7 +133,7 @@ func orchestrateCommand(c *cli.Context) error {
 				Content: "Here is the task and the names of the pre defined containers we have, only return container names with new lines",
 			}, {
 				Role:    "user",
-				Content: string(fileData),
+				Content: string(promptData),
 			}, {
 				Role:    "user",
 				Content: string(containersList),
@@ -132,42 +141,49 @@ func orchestrateCommand(c *cli.Context) error {
 		},
 	}
 
+	// Marshal this payload
 	jsonPayload, err := json.Marshal(payload)
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	// Create a new request
 	req, err := http.NewRequest(http.MethodPost, "https://api.groq.com/openai/v1/chat/completions", bytes.NewBuffer(jsonPayload))
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	// Add required headers, Get the API Key via environment variable
 	req.Header.Add("Content-Type", "application/json")
 	req.Header.Add("Authorization", "Bearer "+os.Getenv("GROQ_API_KEY"))
 
+	// A new http client
 	client := http.Client{}
 
+	// Make a request, get the response from LLM back
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Fatalf("Error making API request: %v", err)
 	}
 
+	// Very Important, please defer to close
 	defer resp.Body.Close()
 
+	// Read the response body
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		log.Fatalf("Error reading response: %v", err)
 	}
 
-	prettyPrint(body)
-
 	var response LLMResponse
 
+	// Unmarshal the response data
 	err = json.Unmarshal(body, &response)
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	// Get all the containers required
 	var containerResponse []string
 	if len(response.Choices) > 0 {
 
@@ -187,6 +203,7 @@ func orchestrateCommand(c *cli.Context) error {
 		log.Fatal("No choices recommended by the model")
 	}
 
+	// Execute the containers which are suggested by the LLM, yeee-Haaa
 	err = executeContainers(containerResponse)
 	if err != nil {
 		log.Fatal(err)
@@ -196,7 +213,87 @@ func orchestrateCommand(c *cli.Context) error {
 }
 
 func executeContainers(containerList []string) error {
-	// log.Println("Containers List:", containerList)
+
+	// Read the data file first, very important to get the non polluted data first
+	// Build all the containers, run them, get their logs, move to the new container
+
+	// var data []byte
+	// data, err := os.ReadFile("data.txt")
+	//
+	// if err != nil {
+	// 	return fmt.Errorf("error reading data.txt: %v", err)
+	// }
+
+	// Build all containers
+	// for _, containerName := range containerList {
+	// 	go func() {
+	//
+	// 	}
+	// }
+
+	for _, containerName := range containerList {
+
+		data, err := os.ReadFile("data.txt")
+		if err != nil {
+			return fmt.Errorf("error reading data.txt: %v", err)
+		}
+
+		// Build it
+		buildCmd := exec.Command("docker", "build", "-t", containerName, "-f", fmt.Sprintf("tools/%s/%s", containerName, containerName), ".")
+		if err := buildCmd.Run(); err != nil {
+			log.Fatalf("error building container %s: %v", containerName, err)
+		}
+
+		// Remove the container if it exists
+		exec.Command("docker", "rm", "-f", containerName).Run()
+
+		// Run command
+		runCmd := exec.Command("docker", "run", "-d", "--name", containerName, containerName)
+
+		// Get Std input via StdingPipe
+		stdin, err := runCmd.StdinPipe()
+		if err != nil {
+			return fmt.Errorf("error getting Stdin Pipe for %s: %w", containerName, err)
+		}
+
+		// Capture Stdout (for next container)
+		// stdout, err := runCmd.StdoutPipe()
+		// if err != nil {
+		// 	return fmt.Errorf("error getting Stdout Pipe for %s: %w", containerName, err)
+		// }
+
+		// Start the command
+		if err := runCmd.Start(); err != nil {
+			log.Fatalf("Error starting container: %v", err)
+		}
+
+		// Wrie previous data or data.txt data
+		_, err = stdin.Write(data)
+		stdin.Close()
+		if err != nil {
+			return fmt.Errorf("error writing to stdin for %s: %w", containerName, err)
+		}
+
+		// Wait for the container to finish
+		if err := runCmd.Wait(); err != nil {
+			log.Printf("Warning: container %s exited with error: %v", containerName, err)
+		}
+
+		// Read output for the next container via docker logs
+		logsCmd := exec.Command("docker", "logs", containerName)
+		previousOutput, err := logsCmd.Output()
+		if err != nil {
+			return fmt.Errorf("error getting logs from %s: %w", containerName, err)
+		}
+
+		// Write the output back to `data.txt`
+		err = os.WriteFile("data.txt", previousOutput, 0644)
+		if err != nil {
+			return fmt.Errorf("error writing output to data.txt: %w", err)
+		}
+
+	}
+
 	return nil
 }
 
