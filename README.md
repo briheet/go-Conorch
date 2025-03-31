@@ -35,7 +35,7 @@ Install the dependencies and devDependencies and start the server.
 ```sh
 # Clone the repository
 git clone https://github.com/briheet/go-Conorch.git
-cd tkgo
+cd go-Conorch
 
 # Get GROQ API Key and place it .env file just like .env.example
 
