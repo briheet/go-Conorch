@@ -217,38 +217,37 @@ func executeContainers(containerList []string) error {
 	// Read the data file first, very important to get the non polluted data first
 	// Build all the containers, run them, get their logs, move to the new container
 
-	// var data []byte
-	// data, err := os.ReadFile("data.txt")
-	//
-	// if err != nil {
-	// 	return fmt.Errorf("error reading data.txt: %v", err)
-	// }
+	// Build the containers before executing with the help of a goroutine
+	for _, container := range containerList {
+		go func(container string) {
+			buildCmd := exec.Command("docker", "build", "-t", container, "-f", fmt.Sprintf("tools/%s/%s.multistage", container, container), fmt.Sprintf("tools/%s/", container))
 
-	// Build all containers
-	// for _, containerName := range containerList {
-	// 	go func() {
-	//
-	// 	}
-	// }
+			fmt.Println("Building:", fmt.Sprintf("tools/%s/%s.multistage", container, container))
+			if err := buildCmd.Run(); err != nil {
+				log.Fatalf("Error building container %s: %v", container, err)
+			}
+
+		}(container)
+	}
 
 	for _, containerName := range containerList {
 
-		data, err := os.ReadFile("data.txt")
+		fileData, err := os.ReadFile("data.txt")
 		if err != nil {
 			return fmt.Errorf("error reading data.txt: %v", err)
 		}
 
-		// Build it
-		buildCmd := exec.Command("docker", "build", "-t", containerName, "-f", fmt.Sprintf("tools/%s/%s", containerName, containerName), ".")
-		if err := buildCmd.Run(); err != nil {
-			log.Fatalf("error building container %s: %v", containerName, err)
-		}
+		// Append asci for newline
+		fileData = append(fileData, 0x04)
 
 		// Remove the container if it exists
-		exec.Command("docker", "rm", "-f", containerName).Run()
+		rmCmd := exec.Command("docker", "rm", "-f", containerName)
+		if err := rmCmd.Run(); err != nil {
+			return fmt.Errorf("Error removing the already present container %s: %v", containerName, err)
+		}
 
 		// Run command
-		runCmd := exec.Command("docker", "run", "-d", "--name", containerName, containerName)
+		runCmd := exec.Command("docker", "run", "--name", containerName, "-i", containerName)
 
 		// Get Std input via StdingPipe
 		stdin, err := runCmd.StdinPipe()
@@ -256,40 +255,50 @@ func executeContainers(containerList []string) error {
 			return fmt.Errorf("error getting Stdin Pipe for %s: %w", containerName, err)
 		}
 
-		// Capture Stdout (for next container)
-		// stdout, err := runCmd.StdoutPipe()
-		// if err != nil {
-		// 	return fmt.Errorf("error getting Stdout Pipe for %s: %w", containerName, err)
-		// }
+		// Write the fcking data man
+		go func(fileData []byte) {
+			defer stdin.Close()
+			io.WriteString(stdin, string(fileData))
+
+		}(fileData)
+
+		// Fking stdout
+		stdout, err := runCmd.StdoutPipe()
+		if err != nil {
+			return fmt.Errorf("error inting the stdout in %s: %v", containerName, err)
+		}
 
 		// Start the command
 		if err := runCmd.Start(); err != nil {
-			log.Fatalf("Error starting container: %v", err)
+			return fmt.Errorf("error staring the runCmd in %s: %v", containerName, err)
 		}
 
-		// Wrie previous data or data.txt data
-		_, err = stdin.Write(data)
-		stdin.Close()
+		// Delete previous contents of the file for storing new data
+		if err := os.Truncate("data.txt", 0); err != nil {
+			return fmt.Errorf("failed to trunicate file in %s: %v", containerName, err)
+		}
+
+		// Gather output
+		output, err := io.ReadAll(stdout)
 		if err != nil {
-			return fmt.Errorf("error writing to stdin for %s: %w", containerName, err)
+			return fmt.Errorf("error reading the output of the container in %s: %v", containerName, err)
 		}
 
-		// Wait for the container to finish
+		// Open file with permissions
+		resultFile, err := os.OpenFile("data.txt", os.O_RDWR|os.O_CREATE, 0644)
+		if err != nil {
+			return fmt.Errorf("error opening the resultFile in %s: %v", containerName, err)
+		}
+
+		// Write the output
+		_, err = resultFile.Write(output)
+		if err != nil {
+			return fmt.Errorf("error writing all the output in %s: %v", containerName, err)
+		}
+
 		if err := runCmd.Wait(); err != nil {
-			log.Printf("Warning: container %s exited with error: %v", containerName, err)
-		}
+			return fmt.Errorf("error waiting for the runCmd to finish in %s: %v", containerName, err)
 
-		// Read output for the next container via docker logs
-		logsCmd := exec.Command("docker", "logs", containerName)
-		previousOutput, err := logsCmd.Output()
-		if err != nil {
-			return fmt.Errorf("error getting logs from %s: %w", containerName, err)
-		}
-
-		// Write the output back to `data.txt`
-		err = os.WriteFile("data.txt", previousOutput, 0644)
-		if err != nil {
-			return fmt.Errorf("error writing output to data.txt: %w", err)
 		}
 
 	}
